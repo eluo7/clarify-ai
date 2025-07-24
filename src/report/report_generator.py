@@ -190,10 +190,27 @@ class ExplanationReportGenerator:
         processed_local_explanations = []
         if local_explanations:
             for i, explanation in enumerate(local_explanations):
-                # 生成局部图表
-                local_chart_path = os.path.join(self.output_dir, f"{report_name}_local_{i}.png")
-                shap_explainer.create_waterfall_plot(explanation.get('instance_idx', i), X_test, local_chart_path)
-                local_chart_b64 = self._image_to_base64(local_chart_path)
+                try:
+                    # 生成局部图表
+                    local_chart_path = os.path.join(self.output_dir, f"{report_name}_local_{i}.png")
+                    instance_idx = explanation.get('instance_idx', i)
+                    
+                    # 确保实例索引有效
+                    if instance_idx >= len(X_test):
+                        print(f"警告: 实例索引 {instance_idx} 超出范围，使用索引 {i}")
+                        instance_idx = min(i, len(X_test) - 1)
+                    
+                    result = shap_explainer.create_waterfall_plot(instance_idx, X_test, local_chart_path)
+                    
+                    if result == "save_failed":
+                        print(f"警告: 无法保存局部图表 {i}，跳过图表生成")
+                        local_chart_b64 = ""
+                    else:
+                        local_chart_b64 = self._image_to_base64(local_chart_path)
+                        
+                except Exception as e:
+                    print(f"生成局部图表 {i} 时出错: {e}")
+                    local_chart_b64 = ""
                 
                 processed_explanation = {
                     'instance_id': explanation.get('instance_idx', i),

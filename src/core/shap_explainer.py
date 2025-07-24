@@ -10,7 +10,37 @@ import plotly.graph_objects as go
 import plotly.express as px
 from typing import Dict, List, Any, Optional, Tuple
 import warnings
+import platform
+import matplotlib.font_manager as fm
+
 warnings.filterwarnings('ignore')
+
+# 设置matplotlib中文字体支持
+def _setup_matplotlib_chinese():
+    """设置matplotlib中文字体支持"""
+    system = platform.system()
+    
+    if system == "Darwin":  # macOS
+        fonts = ['Arial Unicode MS', 'Hiragino Sans GB', 'PingFang SC', 'SimHei']
+    elif system == "Windows":  # Windows
+        fonts = ['Microsoft YaHei', 'SimHei', 'KaiTi', 'FangSong']
+    else:  # Linux
+        fonts = ['DejaVu Sans', 'WenQuanYi Micro Hei', 'SimHei']
+    
+    # 获取可用字体
+    available_fonts = [f.name for f in fm.fontManager.ttflist]
+    
+    for font in fonts:
+        if font in available_fonts:
+            plt.rcParams['font.sans-serif'] = [font]
+            break
+    else:
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    
+    plt.rcParams['axes.unicode_minus'] = False
+
+# 初始化字体设置
+_setup_matplotlib_chinese()
 
 
 class SHAPExplainer:
@@ -104,21 +134,16 @@ class SHAPExplainer:
         if self.shap_values is None:
             self.compute_shap_values(X_test)
         
-        # 计算平均绝对SHAP值作为特征重要性
-        if isinstance(self.shap_values, list):
-            # 多分类情况，取第一个类别的SHAP值
-            importance_scores = np.mean(np.abs(self.shap_values[0]), axis=0)
+        # shap_values是numpy.ndarray格式，根据维度处理
+        if self.shap_values.ndim == 3:
+            # 三维数组: [n_samples, n_features, n_classes] -> 取第一个类别 
+            # axis=0表示对每一列的所有行求平均 → 结果为列的均值向量。
+            importance_scores = np.mean(np.abs(self.shap_values[:, :, 0]), axis=0)
+        elif self.shap_values.ndim == 2:
+            # 二维数组: [n_samples, n_features]
+            importance_scores = np.mean(np.abs(self.shap_values), axis=0)
         else:
-            # 处理shap_values可能是Explanation对象的情况
-            if hasattr(self.shap_values, "values"):
-                shap_values_array = self.shap_values.values
-            else:
-                shap_values_array = self.shap_values
-            importance_scores = np.mean(np.abs(shap_values_array), axis=0)
-        
-        # 确保importance_scores是一维数组
-        if isinstance(importance_scores, np.ndarray) and importance_scores.ndim > 1:
-            importance_scores = np.mean(importance_scores, axis=0)
+            raise ValueError(f"Unexpected SHAP values shape: {self.shap_values.shape}")
         
         # 创建特征重要性字典
         feature_importance = dict(zip(self.feature_names, importance_scores))
@@ -140,18 +165,15 @@ class SHAPExplainer:
         if self.shap_values is None:
             self.compute_shap_values(X_test)
         
-        # 获取单个实例的SHAP值
-        if isinstance(self.shap_values, list):
-            instance_shap = self.shap_values[0][instance_idx]
+        # 获取单个实例的SHAP值 (numpy.ndarray格式)
+        if self.shap_values.ndim == 3:
+            # 三维数组: [n_samples, n_features, n_classes] -> 取指定样本的第一个类别
+            instance_shap = self.shap_values[instance_idx, :, 0]
+        elif self.shap_values.ndim == 2:
+            # 二维数组: [n_samples, n_features]
+            instance_shap = self.shap_values[instance_idx]
         else:
-            # 处理shap_values可能是Explanation对象的情况
-            if hasattr(self.shap_values, "values"):
-                if isinstance(self.shap_values.values, list):
-                    instance_shap = self.shap_values.values[0][instance_idx]
-                else:
-                    instance_shap = self.shap_values.values[instance_idx]
-            else:
-                instance_shap = self.shap_values[instance_idx]
+            raise ValueError(f"Unexpected SHAP values shape: {self.shap_values.shape}")
         
         # 获取实例的特征值
         instance_values = X_test.iloc[instance_idx]
@@ -192,14 +214,13 @@ class SHAPExplainer:
         plt.figure(figsize=(10, 6))
         
         try:
-            if isinstance(self.shap_values, list):
-                shap.summary_plot(self.shap_values[0], X_test, feature_names=self.feature_names, show=False)
+            # shap_values是numpy.ndarray格式
+            if self.shap_values.ndim == 3:
+                # 三维数组: [n_samples, n_features, n_classes] -> 取第一个类别用于绘图
+                shap.summary_plot(self.shap_values[:, :, 0], X_test, feature_names=self.feature_names, show=False)
             else:
-                # 处理shap_values可能是Explanation对象的情况
-                if hasattr(self.shap_values, "values"):
-                    shap.summary_plot(self.shap_values.values, X_test, feature_names=self.feature_names, show=False)
-                else:
-                    shap.summary_plot(self.shap_values, X_test, feature_names=self.feature_names, show=False)
+                # 二维数组: [n_samples, n_features]
+                shap.summary_plot(self.shap_values, X_test, feature_names=self.feature_names, show=False)
         except Exception as e:
             print(f"创建summary plot时出错: {e}")
             # 创建简单的特征重要性图作为后备
@@ -227,54 +248,128 @@ class SHAPExplainer:
         if self.shap_values is None:
             self.compute_shap_values(X_test)
         
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(12, 8))
         
         try:
+            # 检查索引是否有效
+            if instance_idx >= len(X_test):
+                raise IndexError(f"实例索引 {instance_idx} 超出范围，测试集大小为 {len(X_test)}")
+            
             # 获取基准值
+            base_value = 0
             if hasattr(self.explainer, 'expected_value'):
                 if isinstance(self.explainer.expected_value, list):
-                    base_value = self.explainer.expected_value[0]
+                    base_value = float(self.explainer.expected_value[0])
                 else:
-                    base_value = self.explainer.expected_value
-            else:
-                base_value = 0
+                    base_value = float(self.explainer.expected_value)
             
-            # 获取SHAP值
-            if isinstance(self.shap_values, list):
-                instance_shap = self.shap_values[0][instance_idx]
+            # 获取SHAP值 (numpy.ndarray格式)
+            if self.shap_values.ndim == 3:
+                # 三维数组: [n_samples, n_features, n_classes] -> 取指定样本的第一个类别
+                instance_shap = self.shap_values[instance_idx, :, 0]
+            elif self.shap_values.ndim == 2:
+                # 二维数组: [n_samples, n_features]
+                instance_shap = self.shap_values[instance_idx]
             else:
-                # 处理shap_values可能是Explanation对象的情况
-                if hasattr(self.shap_values, "values"):
-                    if isinstance(self.shap_values.values, list):
-                        instance_shap = self.shap_values.values[0][instance_idx]
-                    else:
-                        instance_shap = self.shap_values.values[instance_idx]
-                else:
-                    instance_shap = self.shap_values[instance_idx]
+                raise ValueError(f"Unexpected SHAP values shape: {self.shap_values.shape}")
             
             # 确保instance_shap是一维数组
-            if isinstance(instance_shap, np.ndarray) and instance_shap.ndim > 1:
-                instance_shap = instance_shap.flatten()
+            if isinstance(instance_shap, np.ndarray):
+                if instance_shap.ndim > 1:
+                    instance_shap = instance_shap.flatten()
+                # 取第一个值如果还是多维
+                if len(instance_shap.shape) > 0 and instance_shap.shape[0] != len(self.feature_names):
+                    instance_shap = instance_shap[:len(self.feature_names)]
             
-            # 创建简单的条形图作为替代
-            feature_names = self.feature_names
-            sorted_idx = np.argsort(np.abs(instance_shap))
-            plt.barh(range(len(sorted_idx)), instance_shap[sorted_idx])
-            plt.yticks(range(len(sorted_idx)), [feature_names[i] for i in sorted_idx])
-            plt.xlabel('SHAP值 (特征贡献度)')
-            plt.title(f'样本 #{instance_idx} 的特征贡献度')
+            # 转换为numpy数组并确保长度匹配
+            instance_shap = np.array(instance_shap).flatten()
+            if len(instance_shap) != len(self.feature_names):
+                min_len = min(len(instance_shap), len(self.feature_names))
+                instance_shap = instance_shap[:min_len]
+                feature_names = self.feature_names[:min_len]
+            else:
+                feature_names = self.feature_names
+            
+            # 获取特征值
+            instance_values = X_test.iloc[instance_idx]
+            
+            # 尝试使用SHAP的waterfall plot
+            try:
+                if hasattr(shap, 'waterfall_plot'):
+                    # 创建Explanation对象
+                    explanation = shap.Explanation(
+                        values=instance_shap,
+                        base_values=base_value,
+                        data=instance_values.values[:len(instance_shap)],
+                        feature_names=feature_names
+                    )
+                    shap.waterfall_plot(explanation, show=False)
+                else:
+                    raise AttributeError("SHAP waterfall_plot not available")
+                    
+            except Exception as waterfall_error:
+                print(f"SHAP waterfall plot失败: {waterfall_error}, 使用自定义条形图")
+                
+                # 创建自定义的waterfall风格图表
+                plt.clf()  # 清除之前的图表
+                
+                # 按绝对值排序
+                sorted_idx = np.argsort(np.abs(instance_shap))[::-1]  # 降序
+                sorted_shap = instance_shap[sorted_idx]
+                sorted_features = [feature_names[i] for i in sorted_idx]
+                sorted_values = [instance_values.iloc[i] if i < len(instance_values) else 0 for i in sorted_idx]
+                
+                # 创建颜色映射
+                colors = ['red' if x < 0 else 'blue' for x in sorted_shap]
+                
+                # 创建水平条形图
+                y_pos = np.arange(len(sorted_features))
+                bars = plt.barh(y_pos, sorted_shap, color=colors, alpha=0.7)
+                
+                # 设置标签和标题
+                plt.yticks(y_pos, [f"{feat}\n({val:.2f})" for feat, val in zip(sorted_features, sorted_values)])
+                plt.xlabel('SHAP值 (特征贡献度)')
+                plt.title(f'样本 #{instance_idx} 的特征贡献度分析\n基准值: {base_value:.3f}')
+                
+                # 添加数值标签
+                for i, (bar, val) in enumerate(zip(bars, sorted_shap)):
+                    plt.text(val + (0.01 if val >= 0 else -0.01), i, f'{val:.3f}', 
+                            va='center', ha='left' if val >= 0 else 'right', fontsize=9)
+                
+                # 添加基准线
+                plt.axvline(x=0, color='black', linestyle='-', alpha=0.3)
+                
+                # 添加图例
+                from matplotlib.patches import Patch
+                legend_elements = [Patch(facecolor='blue', alpha=0.7, label='正向贡献'),
+                                 Patch(facecolor='red', alpha=0.7, label='负向贡献')]
+                plt.legend(handles=legend_elements, loc='lower right')
+                
+                plt.tight_layout()
             
         except Exception as e:
             print(f"创建waterfall图时出错: {e}")
-            # 创建简单的条形图作为后备
-            plt.text(0.5, 0.5, f"无法创建Waterfall图: {str(e)}", 
+            import traceback
+            traceback.print_exc()
+            
+            # 创建错误信息图
+            plt.clf()
+            plt.figure(figsize=(10, 6))
+            plt.text(0.5, 0.5, f"无法创建Waterfall图\n错误: {str(e)}\n\n请检查数据格式和SHAP值计算", 
                     horizontalalignment='center', verticalalignment='center',
-                    transform=plt.gca().transAxes)
+                    transform=plt.gca().transAxes, fontsize=12,
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray"))
+            plt.axis('off')
         
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            return save_path
+            try:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+                plt.close()
+                return save_path
+            except Exception as save_error:
+                print(f"保存图片失败: {save_error}")
+                plt.close()
+                return "save_failed"
         else:
             plt.show()
             return "plot_displayed"
@@ -284,17 +379,26 @@ class SHAPExplainer:
         if self.shap_values is None:
             self.compute_shap_values(X_test)
         
-        if isinstance(self.shap_values, list):
-            return shap.force_plot(
-                self.explainer.expected_value,
-                self.shap_values[0][instance_idx],
-                X_test.iloc[instance_idx],
-                feature_names=self.feature_names
-            )
+        # 获取基准值
+        if hasattr(self.explainer, 'expected_value'):
+            if isinstance(self.explainer.expected_value, list):
+                base_value = self.explainer.expected_value[0]
+            else:
+                base_value = self.explainer.expected_value
         else:
-            return shap.force_plot(
-                self.explainer.expected_value,
-                self.shap_values[instance_idx],
-                X_test.iloc[instance_idx],
-                feature_names=self.feature_names
-            )
+            base_value = 0
+        
+        # shap_values是numpy.ndarray格式
+        if self.shap_values.ndim == 3:
+            # 三维数组: [n_samples, n_features, n_classes] -> 取指定样本的第一个类别
+            instance_shap = self.shap_values[instance_idx, :, 0]
+        else:
+            # 二维数组: [n_samples, n_features]
+            instance_shap = self.shap_values[instance_idx]
+        
+        return shap.force_plot(
+            base_value,
+            instance_shap,
+            X_test.iloc[instance_idx],
+            feature_names=self.feature_names
+        )

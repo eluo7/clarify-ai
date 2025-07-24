@@ -11,6 +11,10 @@ import matplotlib.pyplot as plt
 from src.core.shap_explainer import SHAPExplainer
 from src.nlp.natural_language_explainer import NaturalLanguageExplainer
 from src.report.report_generator import ExplanationReportGenerator
+from src.utils.font_config import setup_matplotlib_chinese_font
+
+# 初始化中文字体支持
+setup_matplotlib_chinese_font()
 
 
 class ModelExplainer:

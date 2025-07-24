@@ -15,11 +15,37 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from clarify_ai import ModelExplainer
 
 # 设置字体支持
-try:
-    plt.rcParams['font.sans-serif'] = ['Arial']  # 使用通用字体
-    plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
-except:
-    pass
+def setup_chinese_font():
+    """设置matplotlib中文字体支持"""
+    import platform
+    import matplotlib.font_manager as fm
+    
+    # 获取系统平台
+    system = platform.system()
+    
+    if system == "Darwin":  # macOS
+        fonts = ['Arial Unicode MS', 'Hiragino Sans GB', 'PingFang SC', 'SimHei']
+    elif system == "Windows":  # Windows
+        fonts = ['Microsoft YaHei', 'SimHei', 'KaiTi', 'FangSong']
+    else:  # Linux
+        fonts = ['DejaVu Sans', 'WenQuanYi Micro Hei', 'SimHei']
+    
+    # 尝试设置可用字体
+    available_fonts = [f.name for f in fm.fontManager.ttflist]
+    
+    for font in fonts:
+        if font in available_fonts:
+            plt.rcParams['font.sans-serif'] = [font]
+            break
+    else:
+        # 如果没有找到中文字体，使用默认字体
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+        print("警告: 未找到合适的中文字体，可能无法正确显示中文")
+    
+    plt.rcParams['axes.unicode_minus'] = False  # 正常显示负号
+
+# 设置字体
+setup_chinese_font()
 
 # 创建示例数据集
 def create_credit_dataset(n_samples=1000):
