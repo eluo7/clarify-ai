@@ -248,20 +248,10 @@ class SHAPExplainer:
         if self.shap_values is None:
             self.compute_shap_values(X_test)
         
-        plt.figure(figsize=(12, 8))
-        
         try:
             # 检查索引是否有效
             if instance_idx >= len(X_test):
                 raise IndexError(f"实例索引 {instance_idx} 超出范围，测试集大小为 {len(X_test)}")
-            
-            # 获取基准值
-            base_value = 0
-            if hasattr(self.explainer, 'expected_value'):
-                if isinstance(self.explainer.expected_value, list):
-                    base_value = float(self.explainer.expected_value[0])
-                else:
-                    base_value = float(self.explainer.expected_value)
             
             # 获取SHAP值 (numpy.ndarray格式)
             if self.shap_values.ndim == 3:
@@ -273,94 +263,98 @@ class SHAPExplainer:
             else:
                 raise ValueError(f"Unexpected SHAP values shape: {self.shap_values.shape}")
             
-            # 确保instance_shap是一维数组
-            if isinstance(instance_shap, np.ndarray):
-                if instance_shap.ndim > 1:
-                    instance_shap = instance_shap.flatten()
-                # 取第一个值如果还是多维
-                if len(instance_shap.shape) > 0 and instance_shap.shape[0] != len(self.feature_names):
-                    instance_shap = instance_shap[:len(self.feature_names)]
+            # 确保是一维numpy数组
+            instance_shap = np.array(instance_shap, dtype=np.float64).flatten()
             
-            # 转换为numpy数组并确保长度匹配
-            instance_shap = np.array(instance_shap).flatten()
-            if len(instance_shap) != len(self.feature_names):
-                min_len = min(len(instance_shap), len(self.feature_names))
-                instance_shap = instance_shap[:min_len]
-                feature_names = self.feature_names[:min_len]
-            else:
-                feature_names = self.feature_names
+            # 获取基准值 - 确保是标量
+            base_value = 0.0
+            if hasattr(self.explainer, 'expected_value'):
+                expected_val = self.explainer.expected_value
+                if isinstance(expected_val, (list, np.ndarray)):
+                    base_value = float(expected_val[0])
+                else:
+                    base_value = float(expected_val)
             
             # 获取特征值
             instance_values = X_test.iloc[instance_idx]
             
-            # 尝试使用SHAP的waterfall plot
-            try:
-                if hasattr(shap, 'waterfall_plot'):
-                    # 创建Explanation对象
-                    explanation = shap.Explanation(
-                        values=instance_shap,
-                        base_values=base_value,
-                        data=instance_values.values[:len(instance_shap)],
-                        feature_names=feature_names
-                    )
-                    shap.waterfall_plot(explanation, show=False)
-                else:
-                    raise AttributeError("SHAP waterfall_plot not available")
-                    
-            except Exception as waterfall_error:
-                print(f"SHAP waterfall plot失败: {waterfall_error}, 使用自定义条形图")
-                
-                # 创建自定义的waterfall风格图表
-                plt.clf()  # 清除之前的图表
-                
-                # 按绝对值排序
-                sorted_idx = np.argsort(np.abs(instance_shap))[::-1]  # 降序
-                sorted_shap = instance_shap[sorted_idx]
-                sorted_features = [feature_names[i] for i in sorted_idx]
-                sorted_values = [instance_values.iloc[i] if i < len(instance_values) else 0 for i in sorted_idx]
-                
-                # 创建颜色映射
-                colors = ['red' if x < 0 else 'blue' for x in sorted_shap]
-                
-                # 创建水平条形图
-                y_pos = np.arange(len(sorted_features))
-                bars = plt.barh(y_pos, sorted_shap, color=colors, alpha=0.7)
-                
-                # 设置标签和标题
-                plt.yticks(y_pos, [f"{feat}\n({val:.2f})" for feat, val in zip(sorted_features, sorted_values)])
-                plt.xlabel('SHAP值 (特征贡献度)')
-                plt.title(f'样本 #{instance_idx} 的特征贡献度分析\n基准值: {base_value:.3f}')
-                
-                # 添加数值标签
-                for i, (bar, val) in enumerate(zip(bars, sorted_shap)):
-                    plt.text(val + (0.01 if val >= 0 else -0.01), i, f'{val:.3f}', 
-                            va='center', ha='left' if val >= 0 else 'right', fontsize=9)
-                
-                # 添加基准线
-                plt.axvline(x=0, color='black', linestyle='-', alpha=0.3)
-                
-                # 添加图例
-                from matplotlib.patches import Patch
-                legend_elements = [Patch(facecolor='blue', alpha=0.7, label='正向贡献'),
-                                 Patch(facecolor='red', alpha=0.7, label='负向贡献')]
-                plt.legend(handles=legend_elements, loc='lower right')
-                
-                plt.tight_layout()
+            # 确保数据长度一致
+            n_features = min(len(instance_shap), len(self.feature_names), len(instance_values))
+            instance_shap = instance_shap[:n_features]
+            feature_names = self.feature_names[:n_features]
+            instance_data = instance_values.values[:n_features]
             
+            # 确保所有数据都是标量
+            instance_data = np.array([float(x) for x in instance_data])
+            
+            # 使用SHAP原生waterfall plot
+            if hasattr(shap, 'waterfall_plot'):
+                # 创建Explanation对象
+                explanation = shap.Explanation(
+                    values=instance_shap,
+                    base_values=base_value,
+                    data=instance_data,
+                    feature_names=feature_names
+                )
+                
+                # 创建图表
+                plt.figure(figsize=(12, 8))
+                shap.waterfall_plot(explanation, show=False)
+                
+            else:
+                raise ImportError("SHAP waterfall_plot not available")
+                
         except Exception as e:
             print(f"创建waterfall图时出错: {e}")
             import traceback
             traceback.print_exc()
             
-            # 创建错误信息图
-            plt.clf()
-            plt.figure(figsize=(10, 6))
-            plt.text(0.5, 0.5, f"无法创建Waterfall图\n错误: {str(e)}\n\n请检查数据格式和SHAP值计算", 
-                    horizontalalignment='center', verticalalignment='center',
-                    transform=plt.gca().transAxes, fontsize=12,
-                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray"))
-            plt.axis('off')
+            # 创建简单的条形图作为后备
+            try:
+                plt.figure(figsize=(12, 8))
+                
+                # 获取数据
+                if self.shap_values.ndim == 3:
+                    instance_shap = self.shap_values[instance_idx, :, 0]
+                else:
+                    instance_shap = self.shap_values[instance_idx]
+                
+                instance_shap = np.array(instance_shap).flatten()
+                
+                # 按绝对值排序，只显示前10个
+                abs_values = np.abs(instance_shap)
+                sorted_idx = np.argsort(abs_values)[::-1][:10]
+                
+                top_shap = instance_shap[sorted_idx]
+                top_features = [self.feature_names[i] for i in sorted_idx]
+                
+                # 创建条形图
+                colors = ['#d62728' if x < 0 else '#1f77b4' for x in top_shap]
+                y_pos = np.arange(len(top_features))
+                
+                plt.barh(y_pos, top_shap, color=colors, alpha=0.8)
+                plt.yticks(y_pos, top_features)
+                plt.xlabel('SHAP值 (特征贡献度)')
+                plt.title(f'样本 #{instance_idx} 的特征贡献度分析 (后备图表)')
+                plt.axvline(x=0, color='black', linestyle='-', alpha=0.3)
+                
+                # 添加数值标签
+                for i, val in enumerate(top_shap):
+                    plt.text(val + (0.01 if val >= 0 else -0.01), i, f'{val:.3f}', 
+                            va='center', ha='left' if val >= 0 else 'right')
+                
+                plt.tight_layout()
+                
+            except Exception as backup_error:
+                print(f"后备图表也失败: {backup_error}")
+                plt.figure(figsize=(10, 6))
+                plt.text(0.5, 0.5, f"无法创建Waterfall图\n原始错误: {str(e)}\n后备错误: {str(backup_error)}", 
+                        horizontalalignment='center', verticalalignment='center',
+                        transform=plt.gca().transAxes, fontsize=12,
+                        bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcoral"))
+                plt.axis('off')
         
+        # 保存或显示图表
         if save_path:
             try:
                 plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
