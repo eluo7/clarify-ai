@@ -148,3 +148,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+select
+    IP,
+    count(case when result = 'fail' then 1 else null end) as fail_cnt
+from
+    table
+group by
+    IP
+order by
+    fail_cnt
+limit
+    10;
